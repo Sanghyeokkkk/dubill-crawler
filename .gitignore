@@ -1,0 +1,24 @@
+# ===== 비밀정보 (절대 올리면 안 됨) =====
+config.py
+service_account.json
+
+# ===== 가상환경 / 캐시 =====
+.venv/
+__pycache__/
+*.pyc
+
+# ===== 실행 중 생기는 데이터 =====
+downloads/
+chrome_profile/
+logs/
+deposits.csv
+
+# ===== 진단/테스트로 생성된 산출물 =====
+*.html
+*.png
+test_deposits.xlsx
+
+# ===== OS / IDE =====
+.DS_Store
+.vscode/
+.idea/
