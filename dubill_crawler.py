@@ -68,27 +68,72 @@ def log(msg: str) -> None:
 # ════════════════════════════════════════════════════════════════
 #  1) 브라우저 준비 (엑셀 자동 다운로드 설정 포함)
 # ════════════════════════════════════════════════════════════════
-def build_driver() -> webdriver.Chrome:
-    os.makedirs(config.DOWNLOAD_DIR, exist_ok=True)
+def _kill_stale_profile_chromes(profile: str) -> None:
+    """이전 실행이 남긴 좀비 크롬(이 프로필을 쓰는 것만) 종료. 일반 크롬은 건드리지 않음."""
+    try:
+        import subprocess
+        name = os.path.basename(profile.rstrip("\\/"))  # 'chrome_profile'
+        ps = (f"Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+              f"Where-Object {{ $_.CommandLine -like '*{name}*' }} | "
+              f"ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}")
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                       capture_output=True, timeout=30)
+    except Exception:
+        pass
+
+
+def _clear_profile_locks(profile: str) -> None:
+    """이전 실행이 남긴 stale 잠금 파일 제거 (프로필 잠김 방지)."""
+    for name in ("lockfile", "SingletonLock", "SingletonCookie", "SingletonSocket",
+                 os.path.join("Default", "LOCK")):
+        try:
+            os.remove(os.path.join(profile, name))
+        except OSError:
+            pass
+
+
+def _make_options(profile: str) -> Options:
     options = Options()
     if config.HEADLESS:
         options.add_argument("--headless=new")
     options.add_argument("--window-size=1400,1000")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    # 프로필 폴더 지정 → 2FA/로그인 세션 기억 (다음 실행 때 인증 생략 기대)
-    profile = getattr(config, "CHROME_PROFILE_DIR", "")
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
     if profile:
         os.makedirs(profile, exist_ok=True)
         options.add_argument(f"--user-data-dir={profile}")
-    # 다운로드 폴더 지정 + 다운로드 확인창 끄기
     options.add_experimental_option("prefs", {
         "download.default_directory": config.DOWNLOAD_DIR,
         "download.prompt_for_download": False,
         "download.directory_upgrade": True,
         "safebrowsing.enabled": True,
     })
-    driver = webdriver.Chrome(options=options)
+    return options
+
+
+def build_driver() -> webdriver.Chrome:
+    """크롬 드라이버 생성. 프로필 잠김 등으로 실패하면 임시 프로필로 자동 재시도."""
+    os.makedirs(config.DOWNLOAD_DIR, exist_ok=True)
+    profile = getattr(config, "CHROME_PROFILE_DIR", "")
+
+    # 1차: 세션 기억용 프로필로 시도 (좀비 크롬·stale 잠금 먼저 정리)
+    if profile:
+        _kill_stale_profile_chromes(profile)
+        _clear_profile_locks(profile)
+        try:
+            driver = webdriver.Chrome(options=_make_options(profile))
+            driver.set_page_load_timeout(60)
+            return driver
+        except Exception as e:
+            log(f"[경고] 프로필로 크롬 실행 실패({type(e).__name__}). 임시 프로필로 재시도합니다.")
+            log("       (이번엔 2단계 인증이 다시 필요할 수 있어요.)")
+
+    # 2차: 매번 새로운 임시 프로필 (잠금 충돌 없음, 대신 2FA 필요할 수 있음)
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="dubill_chrome_")
+    driver = webdriver.Chrome(options=_make_options(tmp))
     driver.set_page_load_timeout(60)
     return driver
 

@@ -27,7 +27,10 @@ import config
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 HEADER_ROWS = 2          # 1행=병합제목, 2행=헤더
-LAST_COL = "L"           # A~L 까지만 기록 (M,N 운영열은 손대지 않음)
+LAST_COL = "L"           # 기존 데이터 읽기/중복판정 범위 (A~L)
+# ⚠️ E(실월세)·K(입금상태)는 시트의 자동 배열수식(E3/K3 =MAP(...))이 채우는 열이다.
+#    여기서 "" 등 값을 쓰면 수식 펼침이 막혀 열 전체가 #REF! 가 된다 → 절대 쓰지 말 것.
+#    그래서 신규 행은 A:D 와 F:J 로 나눠서만 기록한다.
 
 
 def _ws():
@@ -74,6 +77,15 @@ def _fmt_amt(v) -> str:
         return str(v)
 
 
+def _num_amt(v):
+    """'650,000' → 650000(정수). H열은 숫자여야 K열 SUMIFS(입금상태)가 동작한다.
+    (콤마 텍스트로 쓰면 SUMIFS가 0으로 계산돼 전부 '미납'이 됨)"""
+    try:
+        return int(float(_norm_amt(v)))
+    except (ValueError, TypeError):
+        return v
+
+
 def _build_row(paid_at, billing_month, customer, depositor, amount) -> list:
     branch, room = split_customer(customer)
     return [
@@ -84,7 +96,7 @@ def _build_row(paid_at, billing_month, customer, depositor, amount) -> list:
         "",                          # E 실월세(더빌 없음)
         billing_label(billing_month),  # F 귀속 월
         paid_at,                     # G 입실료/보증금 입금일
-        _fmt_amt(amount),            # H 실입금액
+        _num_amt(amount),            # H 실입금액(숫자) ← K열 SUMIFS 매칭용
         "CMS",                       # I 입금출처
         depositor,                   # J 특이사항(계좌상 입금표기)
         "",                          # K 입금상태
@@ -110,8 +122,19 @@ def push_rows(rows: list[list]) -> int:
     new_rows = [r for r in rows if _key(r) not in seen]
     if new_rows:
         start = last + 1                         # 마지막 데이터 바로 아래
-        rng = f"A{start}:{LAST_COL}{start + len(new_rows) - 1}"
-        ws.update(range_name=rng, values=new_rows, value_input_option="RAW")
+        end = start + len(new_rows) - 1
+        # 자동수식 열은 건드리지 않는다:
+        #   A(중복키 배열수식), E(실월세), K(입금상태) → 시트 수식이 채움.
+        # 따라서 B:D 와 F:J 만 기록한다. (A는 지점|호수|입금일|금액|입금자 조합키가 자동 생성)
+        bd = [[r[1], r[2], r[3]] for r in new_rows]                 # B:D
+        fj = [[r[5], r[6], r[7], r[8], r[9]] for r in new_rows]      # F:J
+        ws.batch_update(
+            [
+                {"range": f"B{start}:D{end}", "values": bd},
+                {"range": f"F{start}:J{end}", "values": fj},
+            ],
+            value_input_option="RAW",
+        )
     print(f"[OPS탭] 전체 {len(rows)}건 중 신규 {len(new_rows)}건 추가 (기존 {len(seen)}건).")
     return len(new_rows)
 
