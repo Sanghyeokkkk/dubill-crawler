@@ -51,11 +51,16 @@ def _open_worksheet(gc: gspread.Client):
     return ws
 
 
+def _norm(v) -> str:
+    """중복키 비교용 정규화: 콤마/원/공백 제거 (시트 표시 '800,000' vs '800000' 불일치 방지)."""
+    return str(v).replace(",", "").replace("원", "").strip()
+
+
 def _key(row: list) -> str:
     """중복 판정 키: 입금일시|고객명|출금계좌성명|입금금액|가상계좌번호."""
     def at(i):
         return row[i] if i < len(row) else ""
-    return "|".join(str(at(i)) for i in (0, 3, 4, 5, 7))
+    return "|".join(_norm(at(i)) for i in (0, 3, 4, 5, 7))
 
 
 def push_rows(rows: list[list]) -> int:
@@ -66,11 +71,43 @@ def push_rows(rows: list[list]) -> int:
     existing = ws.get_all_values()[1:]  # 헤더 제외
     seen = {_key(r) for r in existing if len(r) >= 5}
 
-    new_rows = [r for r in rows if _key(r) not in seen]
+    new_rows = []
+    for r in rows:
+        k = _key(r)
+        if k in seen:          # 시트에 이미 있음
+            continue
+        seen.add(k)            # 같은 배치 내 중복도 방지
+        new_rows.append(r)
     if new_rows:
         ws.append_rows(new_rows, value_input_option="USER_ENTERED")
-    print(f"[구글시트] 전체 {len(rows)}건 중 신규 {len(new_rows)}건 추가 (기존 {len(seen)}건).")
+    print(f"[구글시트] 전체 {len(rows)}건 중 신규 {len(new_rows)}건 추가 (기존 {len(seen) - len(new_rows)}건).")
     return len(new_rows)
+
+
+def dedupe_existing() -> int:
+    """이미 쌓인 중복 행을 제거(각 키의 첫 행만 유지)하고 탭을 재작성. 제거 건수 반환."""
+    gc = _client()
+    ws = _open_worksheet(gc)
+    all_vals = ws.get_all_values()
+    data = all_vals[1:]
+    seen, uniq = set(), []
+    for r in data:
+        if not any(r):
+            continue
+        k = _key(r)
+        if k in seen:
+            continue
+        seen.add(k)
+        uniq.append((r + [""] * len(HEADER))[:len(HEADER)])
+    removed = sum(1 for r in data if any(r)) - len(uniq)
+    # 데이터 영역 비우고 유니크 행만 다시 씀 (헤더 유지)
+    last_col = chr(ord("A") + len(HEADER) - 1)
+    ws.batch_clear([f"A2:{last_col}{len(all_vals) + 1}"])
+    if uniq:
+        ws.update(values=uniq, range_name=f"A2:{last_col}{len(uniq) + 1}",
+                  value_input_option="USER_ENTERED")
+    print(f"[더빌_입금내역] 중복 {removed}건 제거, {len(uniq)}건 유지.")
+    return removed
 
 
 def _row_from_deposit(d) -> list:
