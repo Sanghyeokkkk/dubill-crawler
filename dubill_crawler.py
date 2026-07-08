@@ -425,6 +425,12 @@ def deliver(deposits: list[Deposit]) -> None:
             ops_push(deposits)
         except Exception as e:
             log(f"[경고] OPS 탭 전송 건너뜀: {e}")
+    if getattr(config, "ENABLE_TAB7_SYNC", False):
+        try:
+            from tab7_sync import push_deposits as tab7_push
+            tab7_push(deposits, apply=True)  # ⑦탭 B~H 기재 (귀속월 I는 수기)
+        except Exception as e:
+            log(f"[경고] ⑦탭 전송 건너뜀: {e}")
 
 
 def run_full() -> None:
