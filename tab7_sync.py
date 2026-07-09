@@ -47,8 +47,9 @@ def _split(customer: str) -> tuple[str, str]:
     return c, ""
 
 
-def _key(branch, room, date, amount) -> str:
-    return f"{str(branch).strip()}|{str(room).strip()}|{str(date).strip()}|{_norm(amount)}"
+def _base(branch, date, amount) -> str:
+    """중복 판정 기준(공통): 지점|입금일|금액."""
+    return f"{str(branch).strip()}|{str(date).strip()}|{_norm(amount)}"
 
 
 def _num_amt(v):
@@ -73,33 +74,42 @@ def push(deposits, apply=False) -> int:
     ws = _tab7()
     vals = ws.get_all_values()
 
-    # 기존 키(중복판정): B지점|C호수|E입금일|F금액
-    seen = set()
+    # 중복판정: (지점|입금일|금액)이 같고 '호수' 또는 '입금자표기'가 같으면 중복.
+    #  → 더빌 등록 호수와 실제 방 호수가 달라도(예: 강준구 309→304) 입금자표기로 잡음.
+    seen_room, seen_payer = set(), set()
     for r in vals[1:]:
-        if len(r) > 5 and r[1].strip():
-            seen.add(_key(r[1], r[2], r[4], r[5]))
+        if len(r) > 7 and r[1].strip():
+            base = _base(r[1], r[4], r[5])
+            seen_room.add(base + "|" + str(r[2]).strip())
+            h = _norm(r[7])                 # H열(특이사항 = 계좌상 입금표기)
+            if h:
+                seen_payer.add(base + "|" + h)
+
     # 마지막 데이터 행: 위(2행)에서부터 '지점명(B)'이 이어진 블록의 끝.
     #   (맨 아래에 동떨어진 옛 데이터가 있어도 그 앞 블록 끝을 정확히 잡음)
     colB = ws.col_values(2)          # index0=1행(헤더)
     last = 1
     for i in range(1, len(colB)):
         if colB[i].strip():
-            last = i + 1             # 1-based 행번호
+            last = i + 1
         else:
-            break                    # 첫 빈칸에서 블록 끝
+            break
 
     new_rows, preview = [], []
     for paid_at, customer, depositor, amount in deposits:
         b, room = _split(customer)
-        k = _key(b, room, paid_at, amount)
-        if k in seen:
+        base = _base(b, paid_at, amount)
+        dep = _norm(depositor)
+        if (base + "|" + room.strip()) in seen_room or (dep and (base + "|" + dep) in seen_payer):
             continue
-        seen.add(k)
+        seen_room.add(base + "|" + room.strip())
+        if dep:
+            seen_payer.add(base + "|" + dep)
         # B~H (7열): 지점,호수,현입주자,입금일,금액,입금출처,특이사항
         new_rows.append([b, room, depositor, paid_at, _num_amt(amount), "CMS", depositor])
         preview.append((b, room, depositor, paid_at, amount))
 
-    print(f"[⑦탭] 신규 대상 {len(new_rows)}건 (기존 {len(seen) - len(new_rows)}건, 총입력 {len(deposits)}건)")
+    print(f"[⑦탭] 신규 대상 {len(new_rows)}건 (총입력 {len(deposits)}건 중, 기존행 {len(seen_room)})")
     for p in preview[:20]:
         print("   +", p)
 
