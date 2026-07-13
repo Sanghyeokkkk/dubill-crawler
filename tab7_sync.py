@@ -23,16 +23,35 @@ import config
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 
-def _tab7():
+def _open():
     creds = Credentials.from_service_account_file(config.SERVICE_ACCOUNT_JSON, scopes=SCOPES)
-    sh = gspread.authorize(creds).open_by_url(config.SPREADSHEET_URL)
-    gid = getattr(config, "TAB7_GID", None)
+    return gspread.authorize(creds).open_by_url(config.SPREADSHEET_URL)
+
+
+def _ws(sh, gid, name):
     if gid is not None:
         try:
             return sh.get_worksheet_by_id(gid)
         except Exception:
             pass
-    return sh.worksheet(config.TAB7_NAME)
+    return sh.worksheet(name)
+
+
+def _crm_names(sh) -> dict:
+    """① CRM(PMS_입주)에서 (지점,호수) → 이름(N열) 조회표. 헤더 3행, 데이터 4행부터."""
+    try:
+        ws = _ws(sh, getattr(config, "CRM_GID", None), getattr(config, "CRM_NAME", ""))
+        vals = ws.get_all_values()
+    except Exception:
+        return {}
+    BRANCH, ROOM, NAME = 0, 1, 13   # A 지점명, B 호수, N 이름
+    d = {}
+    for r in vals[3:]:               # 4행부터 데이터
+        if len(r) > NAME and r[BRANCH].strip():
+            name = r[NAME].strip()
+            if name:
+                d[(r[BRANCH].strip(), str(r[ROOM]).strip())] = name
+    return d
 
 
 def _norm(v) -> str:
@@ -71,7 +90,9 @@ def _load_deposits_from_csv(path):
 
 def push(deposits, apply=False) -> int:
     """deposits: [(paid_at, customer, depositor, amount), ...] 형태. 신규 추가 건수 반환."""
-    ws = _tab7()
+    sh = _open()
+    ws = _ws(sh, getattr(config, "TAB7_GID", None), getattr(config, "TAB7_NAME", ""))
+    crm = _crm_names(sh)   # (지점,호수) → 이름
     vals = ws.get_all_values()
 
     # 중복판정: (지점|입금일|금액)이 같고 '호수' 또는 '입금자표기'가 같으면 중복.
@@ -105,9 +126,11 @@ def push(deposits, apply=False) -> int:
         seen_room.add(base + "|" + room.strip())
         if dep:
             seen_payer.add(base + "|" + dep)
+        # 현입주자(D): CRM(지점,호수) 이름 우선, 없으면 출금계좌성명으로 폴백
+        tenant = crm.get((b.strip(), room.strip())) or depositor
         # B~H (7열): 지점,호수,현입주자,입금일,금액,입금출처,특이사항
-        new_rows.append([b, room, depositor, paid_at, _num_amt(amount), "CMS", depositor])
-        preview.append((b, room, depositor, paid_at, amount))
+        new_rows.append([b, room, tenant, paid_at, _num_amt(amount), "CMS", depositor])
+        preview.append((b, room, tenant, paid_at, amount, "CRM" if crm.get((b.strip(), room.strip())) else "폴백"))
 
     print(f"[⑦탭] 신규 대상 {len(new_rows)}건 (총입력 {len(deposits)}건 중, 기존행 {len(seen_room)})")
     for p in preview[:20]:
