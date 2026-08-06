@@ -31,14 +31,18 @@ cd dubill-crawler
 - 수동: `더빌_입금내역_수집.bat` 더블클릭
 - 바탕화면 바로가기: 이 .bat 를 가리키도록 새로 만들면 됨
 
-## 5. (선택) 매일 자동 실행 등록
-PowerShell에서:
+## 5. (선택) 자동 실행 스케줄 등록 — 하루 6회
+가장 쉬움: **`스케줄_등록.bat` 더블클릭** → 매일 09/10/12/13/16/17시에 자동 실행.
+(삭제하려면 `스케줄_삭제.bat`)
+
+수동 등록도 가능:
 ```powershell
 $bat = "$PWD\dubill_schedule_run.bat"
-$action  = New-ScheduledTaskAction -Execute $bat
-$trigger = New-ScheduledTaskTrigger -Daily -At "10:00AM"
+$times = @("09:00","10:00","12:00","13:00","16:00","17:00")
+$trg = $times | ForEach-Object { New-ScheduledTaskTrigger -Daily -At $_ }
+$action = New-ScheduledTaskAction -Execute $bat
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName "DubillDepositSync" -Action $action -Trigger $trigger -Principal $principal -Force
+Register-ScheduledTask -TaskName "DubillDepositSync" -Action $action -Trigger $trg -Principal $principal -Force
 ```
 
 ---
