@@ -97,35 +97,29 @@ def push(deposits, apply=False) -> int:
 
     # 중복판정: (지점|입금일|금액)이 같고 '호수' 또는 '입금자표기'가 같으면 중복.
     #  → 더빌 등록 호수와 실제 방 호수가 달라도(예: 강준구 309→304) 입금자표기로 잡음.
-    seen_room, seen_payer = set(), set()
+    # 중복판정: (지점|호수|입금일|금액). 같은 법인이 여러 방에 같은 금액을 내도
+    #   (예: 롯데건설 207/306/410) 호수가 달라 각각 유지된다.
+    seen_room = set()
     for r in vals[1:]:
-        if len(r) > 7 and r[1].strip():
-            base = _base(r[1], r[4], r[5])
-            seen_room.add(base + "|" + str(r[2]).strip())
-            h = _norm(r[7])                 # H열(특이사항 = 계좌상 입금표기)
-            if h:
-                seen_payer.add(base + "|" + h)
+        if len(r) > 5 and r[1].strip():
+            seen_room.add(_base(r[1], r[4], r[5]) + "|" + str(r[2]).strip())
 
-    # 마지막 데이터 행: 위(2행)에서부터 '지점명(B)'이 이어진 블록의 끝.
-    #   (맨 아래에 동떨어진 옛 데이터가 있어도 그 앞 블록 끝을 정확히 잡음)
-    colB = ws.col_values(2)          # index0=1행(헤더)
-    last = 1
-    for i in range(1, len(colB)):
-        if colB[i].strip():
-            last = i + 1
-        else:
-            break
+    # 마지막 데이터 행: B~H 어느 칸이든 값이 있으면 데이터 행으로 본다(끝까지 스캔).
+    #   ★ 지점명이 빈 '방배정 전 보증금' 행도 반드시 포함 → 그 위에 절대 덮어쓰지 않음.
+    last = 2
+    for i, r in enumerate(vals, start=1):
+        if i <= 2:
+            continue
+        if any(str(c).strip() for c in r[1:8]):   # B~H
+            last = i
 
     new_rows, preview = [], []
     for paid_at, customer, depositor, amount in deposits:
         b, room = _split(customer)
-        base = _base(b, paid_at, amount)
-        dep = _norm(depositor)
-        if (base + "|" + room.strip()) in seen_room or (dep and (base + "|" + dep) in seen_payer):
+        key = _base(b, paid_at, amount) + "|" + room.strip()
+        if key in seen_room:
             continue
-        seen_room.add(base + "|" + room.strip())
-        if dep:
-            seen_payer.add(base + "|" + dep)
+        seen_room.add(key)
         # 현입주자(D): CRM(지점,호수) 이름 우선, 없으면 출금계좌성명으로 폴백
         tenant = crm.get((b.strip(), room.strip())) or depositor
         # B~H (7열): 지점,호수,현입주자,입금일,금액,입금출처,특이사항
@@ -139,6 +133,13 @@ def push(deposits, apply=False) -> int:
     if apply and new_rows:
         start = last + 1
         end = start + len(new_rows) - 1
+        # ★ 안전장치: 쓰기 직전 대상 구간(A~L)이 비었는지 재확인. 비어있지 않으면 덮어쓰지 않고 중단.
+        target = ws.get_values(f"A{start}:L{end}")
+        if any(any(str(c).strip() for c in row) for row in target):
+            raise RuntimeError(
+                f"[중단] ⑦탭 {start}~{end} 행에 이미 데이터가 있어 덮어쓰기를 막았습니다. "
+                f"동시 편집/누락행 가능성 — 수동 확인 필요."
+            )
         ws.update(range_name=f"B{start}:H{end}", values=new_rows,
                   value_input_option="USER_ENTERED")
         print(f"✅ ⑦탭 B{start}:H{end} 에 {len(new_rows)}건 기재 완료 (귀속월 I열은 수기).")
