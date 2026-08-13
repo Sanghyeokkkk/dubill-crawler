@@ -433,10 +433,10 @@ def deliver(deposits: list[Deposit]) -> None:
             log(f"[경고] ⑦탭 전송 건너뜀: {e}")
     if getattr(config, "ENABLE_CMS_RAW_SYNC", False):
         try:
-            from cms_raw_sync import push_deposits as cms_push
-            cms_push(deposits, apply=True)  # PMS pro의 CMS_RAW 탭(⑦ 구조)
+            from cms_raw_dubill import push_deposits as cms_push
+            cms_push(deposits, apply=True)  # PMS pro의 CMS_RAW 탭(더빌 가상계좌 행)
         except Exception as e:
-            log(f"[경고] CMS_RAW 전송 건너뜀: {e}")
+            log(f"[경고] CMS_RAW(더빌) 전송 건너뜀: {e}")
 
 
 def run_full() -> None:
