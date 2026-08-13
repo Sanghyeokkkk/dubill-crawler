@@ -431,6 +431,12 @@ def deliver(deposits: list[Deposit]) -> None:
             tab7_push(deposits, apply=True)  # ⑦탭 B~H 기재 (귀속월 I는 수기)
         except Exception as e:
             log(f"[경고] ⑦탭 전송 건너뜀: {e}")
+    if getattr(config, "ENABLE_CMS_RAW_SYNC", False):
+        try:
+            from cms_raw_sync import push_deposits as cms_push
+            cms_push(deposits, apply=True)  # PMS pro의 CMS_RAW 탭(⑦ 구조)
+        except Exception as e:
+            log(f"[경고] CMS_RAW 전송 건너뜀: {e}")
 
 
 def run_full() -> None:
